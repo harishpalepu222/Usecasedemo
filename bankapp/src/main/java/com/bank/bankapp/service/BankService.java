@@ -74,22 +74,24 @@ public class BankService {
 			
 			duplicateEntryCheck(customer, service);
 			customer.setToken(getTokenId(BankConstants.UPDATE_PASSBOOK));
+			trnsStatus=prepareTransactionStatus(customer, service, null, customer.getToken(), BankConstants.OPEN);
 			customerQPassBookUpdateT.add(trnsStatus);
-			prepareTransactionStatus(customer, service, null, customer.getToken(), BankConstants.OPEN);
 		    logger.info("Token added in PASSBOOK Queue:" + customerQPassBookUpdateT);
 		
 		} else if (service.equals(BankConstants.CASH_DEPOSIT)) {
 			customerQCashDepositT.addAll(list);
 			duplicateEntryCheck(customer, service);
 			customer.setToken(getTokenId(BankConstants.CASH_DEPOSIT));
-			prepareTransactionStatus(customer, service,null, customer.getToken(), BankConstants.OPEN);
+			trnsStatus=prepareTransactionStatus(customer, service, null, customer.getToken(), BankConstants.OPEN);
+			customerQCashDepositT.add(trnsStatus);
 			logger.info("Token added in CASHDEPOSIT Queue:" + customerQCashDepositT);
 			
 		} else if (service.equals(BankConstants.DEMAND_DRAFT)) {
 			customerQDemandDraftT.addAll(list);
 			duplicateEntryCheck(customer, service);
 			customer.setToken(getTokenId(BankConstants.DEMAND_DRAFT));
-			prepareTransactionStatus(customer, service,null, customer.getToken(), BankConstants.OPEN);
+			trnsStatus=prepareTransactionStatus(customer, service, null, customer.getToken(), BankConstants.OPEN);
+			customerQDemandDraftT.add(trnsStatus);
 			logger.info("Token added in DEMANDDRAFT Queue:" + customerQDemandDraftT);
 		}
 
@@ -122,7 +124,7 @@ public class BankService {
 			TransactionStatus trStatus = transactionRepository.getTransactionStatus(transactionId);
 			trStatus.setStatus(BankConstants.CLOSED);
 			transactionRepository.save(trStatus);
-			customerQPassBookUpdateT.remove();
+			customerQPassBookUpdateT.poll();
 		}
 
 		return customer;
@@ -162,8 +164,7 @@ public class BankService {
 			TransactionStatus trStatus = transactionRepository.getTransactionStatus(transactionId);
 			trStatus.setStatus(BankConstants.CLOSED);
 			transactionRepository.save(trStatus);
-			customerQCashDepositT.remove();
-		}
+            customerQPassBookUpdateT.poll();		}
 		return customer;
 	}
 
@@ -196,8 +197,7 @@ public class BankService {
 			TransactionStatus trStatus = transactionRepository.getTransactionStatus(transactionId);
 			trStatus.setStatus(BankConstants.CLOSED);
 			transactionRepository.save(trStatus);
-			customerQDemandDraftT.remove();
-		}
+            customerQPassBookUpdateT.poll();		}
 
 		return customer;
 
@@ -229,9 +229,15 @@ public class BankService {
 	 private boolean getFromQueue(Customer customer, String service, int amount, int token) throws BankException {
 
 		MessageFormat TokenMF = new MessageFormat(BankConstants.EXPECTED_TOKEN_ERROR);
+		
 		if (service.equals(BankConstants.UPDATE_PASSBOOK)) {
-
+			List<TransactionStatus> list = transactionRepository.getTransactionwithService(BankConstants.UPDATE_PASSBOOK, Arrays.asList("open", "inprogress"));
+			if(customerQPassBookUpdateT==null)
+				customerQPassBookUpdateT.addAll(list);
+			
 			if (customerQPassBookUpdateT.peek().getTokenId() == customer.getToken()) {
+
+				transactionId=customerQPassBookUpdateT.peek().getTransactionId();
 				TransactionStatus trStatus = transactionRepository.getTransactionStatus(transactionId);
 				trStatus.setStatus(BankConstants.IN_PROGRESS);
 				transactionRepository.save(trStatus);
@@ -244,7 +250,13 @@ public class BankService {
 			logger.info("PassBookUpdate Queue:" + customerQPassBookUpdateT);
 			return true;
 		} else if (service.equals(BankConstants.CASH_DEPOSIT)) {
+			List<TransactionStatus> list = transactionRepository.getTransactionwithService(BankConstants.CASH_DEPOSIT, Arrays.asList("open", "inprogress"));
+			if(customerQCashDepositT==null)
+				customerQCashDepositT.addAll(list);
+			
 			if (customerQCashDepositT.peek().getTokenId() == customer.getToken()) {
+				transactionId=customerQCashDepositT.peek().getTransactionId();
+
 				TransactionStatus trStatus = transactionRepository.getTransactionStatus(transactionId);
 				trStatus.setStatus(BankConstants.IN_PROGRESS);
 				transactionRepository.save(trStatus);
@@ -259,7 +271,14 @@ public class BankService {
 			return true;
 
 		} else if (service.equals(BankConstants.DEMAND_DRAFT)) {
+			List<TransactionStatus> list = transactionRepository.getTransactionwithService(BankConstants.DEMAND_DRAFT, Arrays.asList("open", "inprogress"));
+			if(customerQDemandDraftT==null)
+				customerQDemandDraftT.addAll(list);
+			
+			
 			if (customerQDemandDraftT.peek().getTokenId() == customer.getToken()) {
+				transactionId=customerQDemandDraftT.peek().getTransactionId();
+
 				TransactionStatus trStatus = transactionRepository.getTransactionStatus(transactionId);
 				trStatus.setStatus(BankConstants.IN_PROGRESS);
 				transactionRepository.save(trStatus);
@@ -281,7 +300,7 @@ public class BankService {
 
 
 
-	private int getTokenId(String serviceName) {
+	private Integer getTokenId(String serviceName) {
 
 		BankQueue queue = bankQueueRepository.getToken(serviceName);
 		Integer token = queue.getTokenId();
@@ -291,17 +310,17 @@ public class BankService {
 
 	}
 
-	private void prepareTransactionStatus(Customer customer, String service, Integer amount, int token, String status) {
+	private TransactionStatus prepareTransactionStatus(Customer customer, String service, Integer amount, int tokenId, String status) {
 
 		TransactionStatus transactionStatus = new TransactionStatus();
 		transactionStatus.setCustomerId(customer.getCustomerId());
-		transactionStatus.setTokenId(token);
+		transactionStatus.setTokenId(tokenId);
 		transactionStatus.setServiceName(service);
 		transactionStatus.setAmount(!service.equals(BankConstants.UPDATE_PASSBOOK) ? amount : null);
 		transactionStatus.setStatus(status);
 		TransactionStatus tr = transactionRepository.save(transactionStatus);
 		transactionId = tr.getTransactionId();
-		trnsStatus = transactionStatus;		
+		return trnsStatus = transactionStatus;		
 	}
 
 
@@ -320,6 +339,7 @@ public class BankService {
 			if (cust.isPresent())
 				throw new BankException(mf.format(new Object[] { customer.getCustomerId() }),
 						BankConstants.DUPLICATE_ENTRY);
+			
 		} else if (service.equals(BankConstants.CASH_DEPOSIT)) {
 			Optional<TransactionStatus> cust = customerQCashDepositT.stream()
 					.filter(custr -> custr.getCustomerId() == customer.getCustomerId()
@@ -329,6 +349,7 @@ public class BankService {
 			if (cust.isPresent())
 				throw new BankException(mf.format(new Object[] { customer.getCustomerId() }),
 						BankConstants.DUPLICATE_ENTRY);
+			
 		} else if (service.equals(BankConstants.DEMAND_DRAFT)) {
 			Optional<TransactionStatus> cust = customerQDemandDraftT.stream()
 					.filter(custr -> custr.getCustomerId() == customer.getCustomerId()
